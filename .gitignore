@@ -1,0 +1,14 @@
+# XcodeGen で再生成するプロジェクトとビルド成果物
+/LocalTranslator.xcodeproj/
+/build/
+/DerivedData/
+*.ipa
+xcuserdata/
+
+# ローカル環境と署名用ファイル
+.DS_Store
+Thumbs.db
+.env
+.env.*
+*.p12
+*.mobileprovision

@@ -1,0 +1,53 @@
+name: Build unsigned iOS IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Generate Xcode project
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build iPhone app without signing
+        run: |
+          xcodebuild \
+            -project LocalTranslator.xcodeproj \
+            -scheme LocalTranslator \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            'OTHER_LDFLAGS=$(inherited) -Wl,-no_adhoc_codesign' \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          app=build/Build/Products/Release-iphoneos/LocalTranslator.app
+          test -f "$app/Info.plist"
+          test -x "$app/LocalTranslator"
+          mkdir -p build/ipa/Payload
+          ditto "$app" build/ipa/Payload/LocalTranslator.app
+          cd build/ipa
+          zip -qr LocalTranslator-unsigned.ipa Payload
+          unzip -tq LocalTranslator-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalTranslator-unsigned
+          path: build/ipa/LocalTranslator-unsigned.ipa
+          if-no-files-found: error
