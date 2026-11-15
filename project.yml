@@ -16,11 +16,8 @@ targets:
         type: folder
         optional: true
     dependencies:
-      # 部品はアプリ本体に組み込まれるので、Frameworks フォルダにはコピーしない
-      # （中身のない部品が入ると、Sideloadly が署名のときに落ちる）
       - package: sherpa-onnx
         product: sherpa-onnx
-        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.localtranslator

@@ -76,10 +76,11 @@ jobs:
           test -x "$app/LocalTranslator"
           test -s "$app/Models/model.int8.onnx"
           test -s "$app/Models/tokens.txt"
-          # Frameworks フォルダに部品が入っていたら失敗にする（Sideloadly が落ちる原因になる）
+          # sherpa-onnx はアプリ本体に組み込まれているのに、Xcode が中身のない部品（抜け殻）を
+          # Frameworks に置いてしまう。これがあると Sideloadly が署名のときに落ちるので消す。
+          rm -rf "$app/Frameworks"
           if [ -d "$app/Frameworks" ]; then
             echo "::error::Frameworks folder should not be in the app"
-            find "$app/Frameworks"
             exit 1
           fi
           mkdir -p build/ipa/Payload
