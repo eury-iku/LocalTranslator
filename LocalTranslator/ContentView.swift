@@ -14,32 +14,48 @@ enum RecognizerState {
     case failed(String)
 }
 
+/// 翻訳（PLaMo）の準備の状態
+enum TranslatorState {
+    case loading
+    case ready(Translator)
+    case failed(String)
+}
+
 /// いまマイクまわりで何をしているか
 enum MicActivity: Equatable {
     /// 録音中（もう一度押すと止まる）
     case recording(Speaker)
     /// 録った声を文字にしている最中
     case processing(Speaker)
+    /// 文字にした文を翻訳している最中
+    case translating(Speaker)
 }
 
 /// マイクボタンの下に出すお知らせ
 enum MicNotice {
     case notHeard
+    case translationFailed
     case error(String)
 }
 
 /// 対面翻訳の画面。上半分は相手用（逆さま）、下半分は自分用。
 struct ContentView: View {
     @State private var partnerLanguage: PartnerLanguage = .korean
-    /// 最後に聞き取った自分の発言と、相手の発言
+    /// 最後に聞き取った自分の発言と、相手の発言（話した言葉のまま）
     @State private var lastMine: String?
     @State private var lastPartner: String?
+    /// その訳（自分の発言 → 相手の言語、相手の発言 → 日本語）
+    @State private var lastMineTranslated: String?
+    @State private var lastPartnerTranslated: String?
     @State private var recognizerState: RecognizerState = .loading
+    @State private var translatorState: TranslatorState = .loading
     @State private var activity: MicActivity?
     @State private var notices: [Speaker: MicNotice] = [:]
     @State private var showMicPermissionAlert = false
     /// 録音を始めたときの言語（途中で帯の言語を変えても、録った言語で文字にする）
     @State private var recordingLanguageCode = ""
+    /// 録音を始めたときの「訳す先の言語」（PLaMo のコード）
+    @State private var recordingTargetCode = ""
     @State private var recorder = AudioRecorder()
     /// 文字サイズ。アプリを閉じても覚えておく。
     @AppStorage("textSize") private var textSizeRaw = TextSize.small.rawValue
@@ -55,17 +71,18 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             // 相手用パネル。向かいに座った人が読めるように 180 度回転させる。
-            // 翻訳（PLaMo）をつなぐまでは、聞き取った文をそのまま出す。
+            // 黒い文字＝自分の発言の訳、グレーの文字＝相手が言ったこと。
             SpeakerPanel(
                 title: "\(partnerLanguage.partnerLabel) · \(partnerLanguage.nativeName)",
                 hint: partnerLanguage.tapToSpeakHint,
                 status: status(for: .partner),
-                heard: lastMine,
+                heard: lastMineTranslated,
+                pendingLabel: activity == .translating(.me) ? partnerLanguage.translatingLabel : nil,
                 said: lastPartner,
                 tint: .purple,
                 textSize: textSize.wrappedValue,
                 isRecording: activity == .recording(.partner),
-                isProcessing: activity == .processing(.partner),
+                isProcessing: isBusy(.partner),
                 isDisabled: !canPress(.partner),
                 micLabel: "相手のマイク"
             ) {
@@ -75,17 +92,18 @@ struct ContentView: View {
 
             MiddleBar(partnerLanguage: $partnerLanguage, textSize: textSize)
 
-            // 自分用パネル
+            // 自分用パネル。黒い文字＝相手の発言の訳、グレーの文字＝自分が言ったこと。
             SpeakerPanel(
                 title: "自分 · 日本語",
                 hint: "マイクを押して話してね",
                 status: status(for: .me),
-                heard: lastPartner,
+                heard: lastPartnerTranslated,
+                pendingLabel: activity == .translating(.partner) ? "翻訳中…" : nil,
                 said: lastMine,
                 tint: .teal,
                 textSize: textSize.wrappedValue,
                 isRecording: activity == .recording(.me),
-                isProcessing: activity == .processing(.me),
+                isProcessing: isBusy(.me),
                 isDisabled: !canPress(.me),
                 micLabel: "自分のマイク"
             ) {
@@ -93,7 +111,9 @@ struct ContentView: View {
             }
         }
         .task {
+            // メモリを一度にたくさん使わないように、1 つずつ順番に読み込む
             await loadRecognizer()
+            await loadTranslator()
         }
         .alert("マイクが使えないよ", isPresented: $showMicPermissionAlert) {
             Button("設定を開く") {
@@ -112,13 +132,17 @@ struct ContentView: View {
     /// マイクボタンの下に出す文字
     private func status(for speaker: Speaker) -> String {
         let isMe = speaker == .me
+        let preparing = isMe ? "準備中…" : partnerLanguage.preparingLabel
         switch recognizerState {
         case .loading:
-            return isMe ? "準備中…" : partnerLanguage.preparingLabel
+            return preparing
         case .failed(let message):
             return isMe ? "音声認識が使えません（\(message)）" : partnerLanguage.failedLabel
         case .ready:
             break
+        }
+        if case .loading = translatorState {
+            return preparing
         }
 
         switch activity {
@@ -126,6 +150,8 @@ struct ContentView: View {
             return isMe ? "聞き取り中… もう一度押すと終わるよ" : partnerLanguage.listeningLabel
         case .processing(speaker):
             return isMe ? "文字にしています…" : partnerLanguage.processingLabel
+        case .translating(speaker):
+            return isMe ? "翻訳しています…" : partnerLanguage.translatingLabel
         default:
             break
         }
@@ -133,21 +159,35 @@ struct ContentView: View {
         switch notices[speaker] {
         case .notHeard:
             return isMe ? "うまく聞き取れなかったよ。もう一度話してね" : partnerLanguage.notHeardLabel
+        case .translationFailed:
+            return isMe ? "翻訳できなかったので、話した言葉のまま出しています" : partnerLanguage.translationFailedLabel
         case .error(let message):
             return message
         case nil:
-            return " "
+            break
         }
+
+        // 翻訳のモデルが読み込めなかったときは、ずっと知らせておく
+        if case .failed(let message) = translatorState {
+            return isMe ? "翻訳が使えません（\(message)）" : partnerLanguage.translatorUnavailableLabel
+        }
+        return " "
+    }
+
+    /// 文字にしている最中・翻訳している最中か（マイクのところに「…」を出す）
+    private func isBusy(_ speaker: Speaker) -> Bool {
+        activity == .processing(speaker) || activity == .translating(speaker)
     }
 
     /// このマイクボタンを押せるか。
-    /// 録音中の人は「止める」ために押せる。それ以外の人や、文字にしている最中は押せない。
+    /// 録音中の人は「止める」ために押せる。それ以外の人や、文字にしている・翻訳している最中は押せない。
     private func canPress(_ speaker: Speaker) -> Bool {
         guard case .ready = recognizerState else { return false }
+        if case .loading = translatorState { return false }
         switch activity {
         case nil: return true
         case .recording(let current): return current == speaker
-        case .processing: return false
+        case .processing, .translating: return false
         }
     }
 
@@ -164,6 +204,20 @@ struct ContentView: View {
             recognizerState = .ready(recognizer)
         case .failure(let error):
             recognizerState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// アプリを開いたときに、PLaMo のモデルを裏で読み込む（数秒かかる）。
+    private func loadTranslator() async {
+        guard case .loading = translatorState else { return }
+        let result = await Task.detached(priority: .userInitiated) {
+            Result { try Translator() }
+        }.value
+        switch result {
+        case .success(let translator):
+            translatorState = .ready(translator)
+        case .failure(let error):
+            translatorState = .failed(error.localizedDescription)
         }
     }
 
@@ -192,7 +246,10 @@ struct ContentView: View {
             guard activity == nil else { return }
             do {
                 try recorder.start()
+                // 自分のマイク：日本語で聞いて、相手の言語に訳す
+                // 相手のマイク：帯で選んだ言語で聞いて、日本語に訳す
                 recordingLanguageCode = speaker == .me ? "ja" : partnerLanguage.senseVoiceCode
+                recordingTargetCode = speaker == .me ? partnerLanguage.plamoCode : "ja"
                 activity = .recording(speaker)
             } catch {
                 notices[speaker] = .error("録音を始められませんでした")
@@ -204,22 +261,63 @@ struct ContentView: View {
         guard case .ready(let recognizer) = recognizerState else { return }
         let samples = recorder.stop()
         let language = recordingLanguageCode
+        let target = recordingTargetCode
         activity = .processing(speaker)
 
         Task { @MainActor in
             // 0.3 秒より短い音は、押し間違いとみなす
             let isTooShort = samples.count < Int(AudioRecorder.sampleRate * 0.3)
-            let text = isTooShort ? "" : await recognizer.transcribe(samples, language: language)
+            let heard = isTooShort
+                ? SpeechRecognizer.Heard(text: "", languageTag: "")
+                : await recognizer.transcribe(samples, language: language)
 
-            if text.isEmpty {
+            guard !heard.text.isEmpty else {
                 notices[speaker] = .notHeard
-            } else {
-                switch speaker {
-                case .me: lastMine = text
-                case .partner: lastPartner = text
-                }
+                activity = nil
+                return
+            }
+
+            // まず話した言葉を出して、訳ができるまで相手側に「翻訳中…」を出す
+            switch speaker {
+            case .me:
+                lastMine = heard.text
+                lastMineTranslated = nil
+            case .partner:
+                lastPartner = heard.text
+                lastPartnerTranslated = nil
+            }
+            activity = .translating(speaker)
+
+            let translated = await translation(of: heard, requested: language, target: target)
+            if translated == nil {
+                notices[speaker] = .translationFailed
+            }
+            let shown = translated ?? heard.text
+            switch speaker {
+            case .me: lastMineTranslated = shown
+            case .partner: lastPartnerTranslated = shown
             }
             activity = nil
+        }
+    }
+
+    /// 聞き取った文を訳す。訳せなかったときは nil。
+    /// 話された言語が訳す先と同じなら（例：相手が日本語で話した）、訳さずにそのまま返す。
+    private func translation(
+        of heard: SpeechRecognizer.Heard, requested: String, target: String
+    ) async -> String? {
+        let source = SpokenLanguage.detect(
+            text: heard.text, senseVoiceTag: heard.languageTag, requested: requested)
+        if source == SpokenLanguage.family(ofPlamoCode: target) {
+            return heard.text
+        }
+        guard case .ready(let translator) = translatorState else { return nil }
+        do {
+            let text = try await translator.translate(
+                heard.text, from: SpokenLanguage.plamoSourceCode(for: source), to: target)
+            return text.isEmpty ? nil : text
+        } catch {
+            return nil
         }
     }
 }
@@ -232,6 +330,8 @@ struct SpeakerPanel: View {
     /// マイクボタンの下に出す文字（準備中・聞き取り中など）
     let status: String
     let heard: String?
+    /// 訳ができるまでの間、訳文の場所に出す文字（「翻訳中…」）。nil なら出さない。
+    let pendingLabel: String?
     let said: String?
     let tint: Color
     let textSize: TextSize
@@ -296,7 +396,11 @@ struct SpeakerPanel: View {
     /// 訳文と自分の発言。どちらも文字サイズの設定に合わせて一緒に大きさが変わる。
     private var message: some View {
         VStack(spacing: 12) {
-            if let heard {
+            if let pendingLabel {
+                Text(pendingLabel)
+                    .font(.system(size: textSize.heardPointSize))
+                    .foregroundStyle(.secondary)
+            } else if let heard {
                 Text(heard)
                     .font(.system(size: textSize.heardPointSize))
                     .foregroundStyle(.primary)

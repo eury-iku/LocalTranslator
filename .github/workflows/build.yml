@@ -15,31 +15,38 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
-      # SenseVoice のモデル（約 230MB）は大きいのでリポジトリに入れず、ここでダウンロードする。
+      # モデルは大きいのでリポジトリに入れず、ここでダウンロードする。
+      #   SenseVoice（音声認識、約 230MB）と PLaMo 3 Translate 0.8B Q4_K_M（翻訳、約 0.57GB）
       # 一度ダウンロードしたものはキャッシュに取っておき、次からは使い回す。
-      - name: Restore SenseVoice model from cache
+      - name: Restore models from cache
         id: model-cache
         uses: actions/cache@v5
         with:
           path: Models
-          key: sensevoice-zh-en-ja-ko-yue-int8-2025-09-09
+          key: models-sensevoice-2025-09-09-plamo3-0.8b-q4km-1cf96ae
 
-      - name: Download SenseVoice model
+      - name: Download models
         if: steps.model-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
+          mkdir -p Models
+
           name=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09
           curl -fSL --retry 3 -o "$RUNNER_TEMP/$name.tar.bz2" \
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$name.tar.bz2"
           tar xjf "$RUNNER_TEMP/$name.tar.bz2" -C "$RUNNER_TEMP"
-          mkdir -p Models
           cp "$RUNNER_TEMP/$name/model.int8.onnx" "$RUNNER_TEMP/$name/tokens.txt" Models/
 
-      - name: Check SenseVoice model
+          # PFN 公式のファイル。版がずれないように、リポジトリの版（コミット）を指定する。
+          curl -fSL --retry 3 -o Models/plamo-3-translate-0.8b-Q4_K_M.gguf \
+            "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/1cf96ae02133958a20074bfdfab76517bb737d00/plamo-3-translate-0.8b-Q4_K_M.gguf"
+
+      - name: Check models
         run: |
           ls -lh Models
           test -s Models/model.int8.onnx
           test -s Models/tokens.txt
+          test "$(stat -f %z Models/plamo-3-translate-0.8b-Q4_K_M.gguf)" = "573126848"
 
       # sherpa-onnx（Swift Package）のダウンロードも、キャッシュで使い回す
       - name: Restore Swift packages from cache
@@ -76,13 +83,18 @@ jobs:
           test -x "$app/LocalTranslator"
           test -s "$app/Models/model.int8.onnx"
           test -s "$app/Models/tokens.txt"
+          test -s "$app/Models/plamo-3-translate-0.8b-Q4_K_M.gguf"
           # sherpa-onnx はアプリ本体に組み込まれているのに、Xcode が中身のない部品（抜け殻）を
-          # Frameworks に置いてしまう。これがあると Sideloadly が署名のときに落ちるので消す。
-          rm -rf "$app/Frameworks"
+          # Frameworks に置いてしまうので消す。llama.cpp（llama.framework）は本物の部品なので残す。
+          echo "Frameworks before cleanup:"
+          ls -la "$app/Frameworks" || true
           if [ -d "$app/Frameworks" ]; then
-            echo "::error::Frameworks folder should not be in the app"
-            exit 1
+            find "$app/Frameworks" -mindepth 1 -maxdepth 1 ! -name 'llama.framework' -exec rm -rf {} +
           fi
+          echo "Frameworks after cleanup:"
+          ls -la "$app/Frameworks"
+          test -f "$app/Frameworks/llama.framework/llama"
+          otool -L "$app/LocalTranslator" | grep -i llama
           mkdir -p build/ipa/Payload
           ditto "$app" build/ipa/Payload/LocalTranslator.app
           cd build/ipa

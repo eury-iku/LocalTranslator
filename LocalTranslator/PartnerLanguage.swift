@@ -80,6 +80,33 @@ enum PartnerLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 翻訳している最中の表示
+    var translatingLabel: String {
+        switch self {
+        case .korean: return "번역 중…"
+        case .chinese: return "正在翻译…"
+        case .english: return "Translating…"
+        }
+    }
+
+    /// 翻訳できなかったときの表示
+    var translationFailedLabel: String {
+        switch self {
+        case .korean: return "번역하지 못했어요"
+        case .chinese: return "翻译失败"
+        case .english: return "Couldn't translate"
+        }
+    }
+
+    /// 翻訳が使えないときの表示
+    var translatorUnavailableLabel: String {
+        switch self {
+        case .korean: return "번역을 사용할 수 없어요"
+        case .chinese: return "无法使用翻译"
+        case .english: return "Translation is unavailable"
+        }
+    }
+
     /// アプリの準備中（モデルの読み込み中）の表示
     var preparingLabel: String {
         switch self {

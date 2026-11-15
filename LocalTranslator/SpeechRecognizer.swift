@@ -37,8 +37,14 @@ final class SpeechRecognizer: @unchecked Sendable {
         recognizer = SherpaOnnxOfflineRecognizer(config: &config)
     }
 
+    /// 聞き取った結果：文字と、SenseVoice が判定した言語（例: "<|ja|>"）
+    struct Heard {
+        let text: String
+        let languageTag: String
+    }
+
     /// 音を文字にする。language は SenseVoice の言語コード（ja / ko / zh / en）。
-    func transcribe(_ samples: [Float], language: String) async -> String {
+    func transcribe(_ samples: [Float], language: String) async -> Heard {
         await withCheckedContinuation { continuation in
             queue.async { [self] in
                 // 押されたボタンに合わせて、聞き取る言語を切り替える
@@ -47,7 +53,7 @@ final class SpeechRecognizer: @unchecked Sendable {
 
                 let result = recognizer.decode(samples: samples, sampleRate: Int(AudioRecorder.sampleRate))
                 let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                continuation.resume(returning: text)
+                continuation.resume(returning: Heard(text: text, languageTag: result.lang))
             }
         }
     }
