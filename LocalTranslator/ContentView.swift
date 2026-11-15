@@ -14,6 +14,15 @@ struct ContentView: View {
     @State private var listening: Speaker?
     @State private var mineIndex = 0
     @State private var partnerIndex = 0
+    /// 文字サイズ。アプリを閉じても覚えておく。
+    @AppStorage("textSize") private var textSizeRaw = TextSize.small.rawValue
+
+    private var textSize: Binding<TextSize> {
+        Binding(
+            get: { TextSize(rawValue: textSizeRaw) ?? .small },
+            set: { textSizeRaw = $0.rawValue }
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +34,7 @@ struct ContentView: View {
                 heard: lastMine?.text(in: partnerLanguage),
                 said: lastPartner?.text(in: partnerLanguage),
                 tint: .purple,
+                textSize: textSize.wrappedValue,
                 isListening: listening == .partner,
                 isDisabled: listening != nil,
                 micLabel: "相手のマイク"
@@ -33,7 +43,7 @@ struct ContentView: View {
             }
             .rotationEffect(.degrees(180))
 
-            LanguageBar(partnerLanguage: $partnerLanguage)
+            MiddleBar(partnerLanguage: $partnerLanguage, textSize: textSize)
 
             // 自分用パネル
             SpeakerPanel(
@@ -43,6 +53,7 @@ struct ContentView: View {
                 heard: lastPartner?.japanese,
                 said: lastMine?.japanese,
                 tint: .teal,
+                textSize: textSize.wrappedValue,
                 isListening: listening == .me,
                 isDisabled: listening != nil,
                 micLabel: "自分のマイク"
@@ -74,6 +85,7 @@ struct ContentView: View {
 }
 
 /// 片方の人のパネル。大きい文字＝相手の言葉の訳、小さい文字＝自分が言ったこと。
+/// 文が短いときは真ん中に表示し、枠に入りきらないときは枠の中でスクロールできる。
 struct SpeakerPanel: View {
     let title: String
     let hint: String
@@ -81,6 +93,7 @@ struct SpeakerPanel: View {
     let heard: String?
     let said: String?
     let tint: Color
+    let textSize: TextSize
     let isListening: Bool
     let isDisabled: Bool
     let micLabel: String
@@ -93,24 +106,19 @@ struct SpeakerPanel: View {
                 .foregroundStyle(tint)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 0)
-
-            Text(heard ?? hint)
-                .font(heard == nil ? .body : .title3)
-                .foregroundStyle(heard == nil ? .secondary : .primary)
-                .multilineTextAlignment(.center)
-                .minimumScaleFactor(0.6)
-                .frame(maxWidth: .infinity)
-
-            if let said {
-                Text(said)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
+            // 入りきるなら 1 つ目（真ん中寄せ）、入りきらないなら 2 つ目（スクロール）が選ばれる
+            ViewThatFits(in: .vertical) {
+                message
+                    .frame(maxHeight: .infinity)
+                ScrollView {
+                    message
+                        .padding(.vertical, 4)
+                }
+                .scrollIndicators(.visible)
             }
-
-            Spacer(minLength: 0)
+            .frame(maxHeight: .infinity)
+            // 新しい文が来たら、スクロール位置をいちばん上に戻す
+            .id("\(heard ?? "")|\(said ?? "")")
 
             Button(action: action) {
                 Image(systemName: isListening ? "waveform" : "mic.fill")
@@ -132,33 +140,83 @@ struct SpeakerPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(tint.opacity(0.1))
     }
+
+    /// 訳文と自分の発言。どちらも文字サイズの設定に合わせて一緒に大きさが変わる。
+    private var message: some View {
+        VStack(spacing: 12) {
+            if let heard {
+                Text(heard)
+                    .font(.system(size: textSize.heardPointSize))
+                    .foregroundStyle(.primary)
+            } else {
+                Text(hint)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let said {
+                Text(said)
+                    .font(.system(size: textSize.saidPointSize))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity)
+    }
 }
 
-/// 真ん中の帯。タップすると相手の言語を切り替えられる。
-struct LanguageBar: View {
+/// 真ん中の帯。左右のボタンで文字サイズ、真ん中のタップで相手の言語を切り替える。
+struct MiddleBar: View {
     @Binding var partnerLanguage: PartnerLanguage
+    @Binding var textSize: TextSize
 
     var body: some View {
-        Menu {
-            Picker("相手の言語", selection: $partnerLanguage) {
-                ForEach(PartnerLanguage.allCases) { language in
-                    Text("\(language.japaneseName)（\(language.nativeName)）")
-                        .tag(language)
+        HStack(spacing: 0) {
+            Button {
+                if let smaller = textSize.smaller { textSize = smaller }
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+                    .frame(width: 44, height: 40)
+            }
+            .disabled(textSize.smaller == nil)
+            .accessibilityLabel("文字を小さく")
+
+            Menu {
+                Picker("相手の言語", selection: $partnerLanguage) {
+                    ForEach(PartnerLanguage.allCases) { language in
+                        Text("\(language.japaneseName)（\(language.nativeName)）")
+                            .tag(language)
+                    }
                 }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("日本語 ⇄ \(partnerLanguage.nativeName)")
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 40)
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.up.arrow.down")
-                Text("日本語 ⇄ \(partnerLanguage.nativeName)")
-                Image(systemName: "chevron.down")
-                    .font(.caption2)
+
+            Text("文字 \(textSize.label)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            Button {
+                if let larger = textSize.larger { textSize = larger }
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+                    .frame(width: 44, height: 40)
             }
-            .font(.subheadline)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(.bar)
+            .disabled(textSize.larger == nil)
+            .accessibilityLabel("文字を大きく")
         }
+        .padding(.horizontal, 8)
+        .background(.bar)
     }
 }
 

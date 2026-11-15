@@ -2,7 +2,7 @@
 
 Windows 11 から GitHub に push すると、GitHub Actions の macOS 環境で iPhone 用の SwiftUI アプリをビルドし、署名なし IPA を作ります。
 
-アプリは対面翻訳の画面です。上半分が相手用（向かいの人が読めるよう逆さま表示）、下半分が自分用で、真ん中の帯をタップすると相手の言語（韓国語・中国語）を切り替えられます。今はマイクボタンを押すと例文とその訳が表示されるだけで、音声認識（SenseVoice）と翻訳（PLaMo 3 Translate）は今後のフェーズでつなぎます。
+アプリは対面翻訳の画面です。上半分が相手用（向かいの人が読めるよう逆さま表示）、下半分が自分用で、真ん中の帯をタップすると相手の言語（韓国語・中国語・英語）を切り替えられます。帯の左右のボタンで、訳文と自分の発言の文字サイズを一緒に小・中・大の 3 段階で変えられます。文が枠に入りきらないときは、枠の中をスクロールして読めます。今はマイクボタンを押すと例文とその訳が表示されるだけで、音声認識（SenseVoice）と翻訳（PLaMo 3 Translate）は今後のフェーズでつなぎます。
 
 ## ファイルの役割
 
@@ -11,7 +11,8 @@ Windows 11 から GitHub に push すると、GitHub Actions の macOS 環境で
 | [`LocalTranslator/LocalTranslatorApp.swift`](LocalTranslator/LocalTranslatorApp.swift) | アプリの起動場所です。 |
 | [`LocalTranslator/ContentView.swift`](LocalTranslator/ContentView.swift) | 上下 2 分割の対面翻訳画面と、マイクボタンを押したときの仮の動きです。 |
 | [`LocalTranslator/PartnerLanguage.swift`](LocalTranslator/PartnerLanguage.swift) | 相手の言語の一覧と、PLaMo に渡す言語コードです。 |
-| [`LocalTranslator/SampleConversation.swift`](LocalTranslator/SampleConversation.swift) | 音声認識と翻訳をつなぐまでの例文です。 |
+| [`LocalTranslator/TextSize.swift`](LocalTranslator/TextSize.swift) | 文字サイズの 3 段階（小・中・大）です。 |
+| [`LocalTranslator/SampleConversation.swift`](LocalTranslator/SampleConversation.swift) | 音声認識と翻訳をつなぐまでの例文です。枠からはみ出す長さを試す長文も入っています。 |
 | [`project.yml`](project.yml) | XcodeGen が Xcode プロジェクトを作るための設定です。最低対応バージョンは iOS 17.0 で、画面は縦向き固定です。 |
 | [`.github/workflows/build.yml`](.github/workflows/build.yml) | macOS 上でプロジェクト生成、実機向けビルド、IPA の作成とアップロードを行います。 |
 | [`.gitignore`](.gitignore) | 生成された Xcode プロジェクト、ビルド成果物、署名用ファイルなどを Git の管理対象から外します。 |
