@@ -57,6 +57,9 @@ struct ContentView: View {
     /// 録音を始めたときの「訳す先の言語」（PLaMo のコード）
     @State private var recordingTargetCode = ""
     @State private var recorder = AudioRecorder()
+    /// 確認用：最後に録音した人と、その長さ（秒）。「▶︎聞く」で聞き返せる。
+    @State private var lastRecordingSpeaker: Speaker?
+    @State private var lastRecordingSeconds: Double = 0
     /// 文字サイズ。アプリを閉じても覚えておく。
     @AppStorage("textSize") private var textSizeRaw = TextSize.small.rawValue
     @Environment(\.openURL) private var openURL
@@ -84,7 +87,9 @@ struct ContentView: View {
                 isRecording: activity == .recording(.partner),
                 isProcessing: isBusy(.partner),
                 isDisabled: !canPress(.partner),
-                micLabel: "相手のマイク"
+                micLabel: "相手のマイク",
+                playbackLabel: playbackLabel(for: .partner),
+                onPlayback: { recorder.playLast() }
             ) {
                 micTapped(.partner)
             }
@@ -105,12 +110,18 @@ struct ContentView: View {
                 isRecording: activity == .recording(.me),
                 isProcessing: isBusy(.me),
                 isDisabled: !canPress(.me),
-                micLabel: "自分のマイク"
+                micLabel: "自分のマイク",
+                playbackLabel: playbackLabel(for: .me),
+                onPlayback: { recorder.playLast() }
             ) {
                 micTapped(.me)
             }
         }
         .task {
+            // 話し始めが切れないように、マイクを先に動かしておく（許可がまだなら、最初に押したときに聞く）
+            if AudioRecorder.hasPermission {
+                try? recorder.warmUp()
+            }
             // メモリを一度にたくさん使わないように、1 つずつ順番に読み込む
             await loadRecognizer()
             await loadTranslator()
@@ -172,6 +183,12 @@ struct ContentView: View {
             return isMe ? "翻訳が使えません（\(message)）" : partnerLanguage.translatorUnavailableLabel
         }
         return " "
+    }
+
+    /// 確認用の「録音 ○秒 ▶︎聞く」。最後に録音した人のパネルにだけ、何もしていないときに出す。
+    private func playbackLabel(for speaker: Speaker) -> String? {
+        guard activity == nil, lastRecordingSpeaker == speaker else { return nil }
+        return String(format: "録音 %.1f秒 ▶︎聞く", lastRecordingSeconds)
     }
 
     /// 文字にしている最中・翻訳している最中か（マイクのところに「…」を出す）
@@ -259,17 +276,26 @@ struct ContentView: View {
 
     private func finishRecording(_ speaker: Speaker) {
         guard case .ready(let recognizer) = recognizerState else { return }
-        let samples = recorder.stop()
         let language = recordingLanguageCode
         let target = recordingTargetCode
         activity = .processing(speaker)
 
         Task { @MainActor in
-            // 0.3 秒より短い音は、押し間違いとみなす
-            let isTooShort = samples.count < Int(AudioRecorder.sampleRate * 0.3)
-            let heard = isTooShort
+            // 語尾が切れないように、少しだけ録り続けてから止まる
+            let recording = await recorder.stop()
+            lastRecordingSpeaker = speaker
+            lastRecordingSeconds = Double(recording.samples.count) / AudioRecorder.sampleRate
+            // 押していた時間が 0.3 秒より短いときは、押し間違いとみなす
+            let isTooShort = recording.pressedSeconds < 0.3 || recording.samples.isEmpty
+            let raw = isTooShort
                 ? SpeechRecognizer.Heard(text: "", languageTag: "")
-                : await recognizer.transcribe(samples, language: language)
+                : await recognizer.transcribe(recording.samples, language: language)
+            // 英語は全部大文字で出てくるので、ふつうの書き方に直す（PLaMo にも直した文を渡す）
+            let spoken = SpokenLanguage.detect(
+                text: raw.text, senseVoiceTag: raw.languageTag, requested: language)
+            let heard = spoken == "en"
+                ? SpeechRecognizer.Heard(text: EnglishCase.normalize(raw.text), languageTag: raw.languageTag)
+                : raw
 
             guard !heard.text.isEmpty else {
                 notices[speaker] = .notHeard
@@ -339,6 +365,9 @@ struct SpeakerPanel: View {
     let isProcessing: Bool
     let isDisabled: Bool
     let micLabel: String
+    /// 確認用の「録音 ○秒 ▶︎聞く」。nil なら出さない。
+    let playbackLabel: String?
+    let onPlayback: () -> Void
     let action: () -> Void
 
     var body: some View {
@@ -380,6 +409,12 @@ struct SpeakerPanel: View {
                 .multilineTextAlignment(.center)
                 // エラーの説明が長いときも読めるように、4 行まで出す
                 .lineLimit(4)
+
+            if let playbackLabel {
+                Button(playbackLabel, action: onPlayback)
+                    .font(.caption)
+                    .foregroundStyle(tint)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
