@@ -4,7 +4,7 @@ import SwiftUI
 struct LocalTranslatorApp: App {
     var body: some Scene {
         WindowGroup {
-            Text("Hello, World!")
+            ContentView()
         }
     }
 }
