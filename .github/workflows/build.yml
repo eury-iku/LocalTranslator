@@ -76,6 +76,12 @@ jobs:
           test -x "$app/LocalTranslator"
           test -s "$app/Models/model.int8.onnx"
           test -s "$app/Models/tokens.txt"
+          # Frameworks フォルダに部品が入っていたら失敗にする（Sideloadly が落ちる原因になる）
+          if [ -d "$app/Frameworks" ]; then
+            echo "::error::Frameworks folder should not be in the app"
+            find "$app/Frameworks"
+            exit 1
+          fi
           mkdir -p build/ipa/Payload
           ditto "$app" build/ipa/Payload/LocalTranslator.app
           cd build/ipa
