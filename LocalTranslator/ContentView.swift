@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 誰が話しているか
 enum Speaker {
@@ -6,16 +7,43 @@ enum Speaker {
     case partner
 }
 
+/// 音声認識（SenseVoice）の準備の状態
+enum RecognizerState {
+    case loading
+    case ready(SpeechRecognizer)
+    case failed(String)
+}
+
+/// いまマイクまわりで何をしているか
+enum MicActivity: Equatable {
+    /// 録音中（もう一度押すと止まる）
+    case recording(Speaker)
+    /// 録った声を文字にしている最中
+    case processing(Speaker)
+}
+
+/// マイクボタンの下に出すお知らせ
+enum MicNotice {
+    case notHeard
+    case error(String)
+}
+
 /// 対面翻訳の画面。上半分は相手用（逆さま）、下半分は自分用。
 struct ContentView: View {
     @State private var partnerLanguage: PartnerLanguage = .korean
-    @State private var lastMine: SamplePhrase?
-    @State private var lastPartner: SamplePhrase?
-    @State private var listening: Speaker?
-    @State private var mineIndex = 0
-    @State private var partnerIndex = 0
+    /// 最後に聞き取った自分の発言と、相手の発言
+    @State private var lastMine: String?
+    @State private var lastPartner: String?
+    @State private var recognizerState: RecognizerState = .loading
+    @State private var activity: MicActivity?
+    @State private var notices: [Speaker: MicNotice] = [:]
+    @State private var showMicPermissionAlert = false
+    /// 録音を始めたときの言語（途中で帯の言語を変えても、録った言語で文字にする）
+    @State private var recordingLanguageCode = ""
+    @State private var recorder = AudioRecorder()
     /// 文字サイズ。アプリを閉じても覚えておく。
     @AppStorage("textSize") private var textSizeRaw = TextSize.small.rawValue
+    @Environment(\.openURL) private var openURL
 
     private var textSize: Binding<TextSize> {
         Binding(
@@ -27,19 +55,21 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             // 相手用パネル。向かいに座った人が読めるように 180 度回転させる。
+            // 翻訳（PLaMo）をつなぐまでは、聞き取った文をそのまま出す。
             SpeakerPanel(
                 title: "\(partnerLanguage.partnerLabel) · \(partnerLanguage.nativeName)",
                 hint: partnerLanguage.tapToSpeakHint,
-                listeningLabel: partnerLanguage.listeningLabel,
-                heard: lastMine?.text(in: partnerLanguage),
-                said: lastPartner?.text(in: partnerLanguage),
+                status: status(for: .partner),
+                heard: lastMine,
+                said: lastPartner,
                 tint: .purple,
                 textSize: textSize.wrappedValue,
-                isListening: listening == .partner,
-                isDisabled: listening != nil,
+                isRecording: activity == .recording(.partner),
+                isProcessing: activity == .processing(.partner),
+                isDisabled: !canPress(.partner),
                 micLabel: "相手のマイク"
             ) {
-                speak(.partner)
+                micTapped(.partner)
             }
             .rotationEffect(.degrees(180))
 
@@ -49,37 +79,147 @@ struct ContentView: View {
             SpeakerPanel(
                 title: "自分 · 日本語",
                 hint: "マイクを押して話してね",
-                listeningLabel: "聞き取り中…",
-                heard: lastPartner?.japanese,
-                said: lastMine?.japanese,
+                status: status(for: .me),
+                heard: lastPartner,
+                said: lastMine,
                 tint: .teal,
                 textSize: textSize.wrappedValue,
-                isListening: listening == .me,
-                isDisabled: listening != nil,
+                isRecording: activity == .recording(.me),
+                isProcessing: activity == .processing(.me),
+                isDisabled: !canPress(.me),
                 micLabel: "自分のマイク"
             ) {
-                speak(.me)
+                micTapped(.me)
+            }
+        }
+        .task {
+            await loadRecognizer()
+        }
+        .alert("マイクが使えないよ", isPresented: $showMicPermissionAlert) {
+            Button("設定を開く") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    openURL(url)
+                }
+            }
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text("設定アプリの「LocalTranslator」で、マイクをオンにしてね。")
+        }
+    }
+
+    // MARK: - 状態に合わせた表示
+
+    /// マイクボタンの下に出す文字
+    private func status(for speaker: Speaker) -> String {
+        let isMe = speaker == .me
+        switch recognizerState {
+        case .loading:
+            return isMe ? "準備中…" : partnerLanguage.preparingLabel
+        case .failed(let message):
+            return isMe ? "音声認識が使えません（\(message)）" : partnerLanguage.failedLabel
+        case .ready:
+            break
+        }
+
+        switch activity {
+        case .recording(speaker):
+            return isMe ? "聞き取り中… もう一度押すと終わるよ" : partnerLanguage.listeningLabel
+        case .processing(speaker):
+            return isMe ? "文字にしています…" : partnerLanguage.processingLabel
+        default:
+            break
+        }
+
+        switch notices[speaker] {
+        case .notHeard:
+            return isMe ? "うまく聞き取れなかったよ。もう一度話してね" : partnerLanguage.notHeardLabel
+        case .error(let message):
+            return message
+        case nil:
+            return " "
+        }
+    }
+
+    /// このマイクボタンを押せるか。
+    /// 録音中の人は「止める」ために押せる。それ以外の人や、文字にしている最中は押せない。
+    private func canPress(_ speaker: Speaker) -> Bool {
+        guard case .ready = recognizerState else { return false }
+        switch activity {
+        case nil: return true
+        case .recording(let current): return current == speaker
+        case .processing: return false
+        }
+    }
+
+    // MARK: - 動き
+
+    /// アプリを開いたときに、SenseVoice のモデルを裏で読み込む（数秒かかる）。
+    private func loadRecognizer() async {
+        guard case .loading = recognizerState else { return }
+        let result = await Task.detached(priority: .userInitiated) {
+            Result { try SpeechRecognizer() }
+        }.value
+        switch result {
+        case .success(let recognizer):
+            recognizerState = .ready(recognizer)
+        case .failure(let error):
+            recognizerState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// マイクボタンを押したとき：止まっていれば録音開始、録音中なら終了。
+    private func micTapped(_ speaker: Speaker) {
+        switch activity {
+        case nil:
+            startRecording(speaker)
+        case .recording(speaker):
+            finishRecording(speaker)
+        default:
+            break
+        }
+    }
+
+    private func startRecording(_ speaker: Speaker) {
+        guard case .ready = recognizerState else { return }
+        notices[speaker] = nil
+
+        Task { @MainActor in
+            guard await AudioRecorder.requestPermission() else {
+                showMicPermissionAlert = true
+                return
+            }
+            // 許可を待っている間に、もう片方が話し始めていたら何もしない
+            guard activity == nil else { return }
+            do {
+                try recorder.start()
+                recordingLanguageCode = speaker == .me ? "ja" : partnerLanguage.senseVoiceCode
+                activity = .recording(speaker)
+            } catch {
+                notices[speaker] = .error("録音を始められませんでした")
             }
         }
     }
 
-    /// マイクボタンを押したときの仮の動き。
-    /// 少し待ってから例文を出す（あとで SenseVoice と PLaMo に置き換える）。
-    private func speak(_ speaker: Speaker) {
-        guard listening == nil else { return }
-        listening = speaker
+    private func finishRecording(_ speaker: Speaker) {
+        guard case .ready(let recognizer) = recognizerState else { return }
+        let samples = recorder.stop()
+        let language = recordingLanguageCode
+        activity = .processing(speaker)
 
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            switch speaker {
-            case .me:
-                lastMine = SampleConversation.mine[mineIndex]
-                mineIndex = (mineIndex + 1) % SampleConversation.mine.count
-            case .partner:
-                lastPartner = SampleConversation.partner[partnerIndex]
-                partnerIndex = (partnerIndex + 1) % SampleConversation.partner.count
+            // 0.3 秒より短い音は、押し間違いとみなす
+            let isTooShort = samples.count < Int(AudioRecorder.sampleRate * 0.3)
+            let text = isTooShort ? "" : await recognizer.transcribe(samples, language: language)
+
+            if text.isEmpty {
+                notices[speaker] = .notHeard
+            } else {
+                switch speaker {
+                case .me: lastMine = text
+                case .partner: lastPartner = text
+                }
             }
-            listening = nil
+            activity = nil
         }
     }
 }
@@ -89,12 +229,14 @@ struct ContentView: View {
 struct SpeakerPanel: View {
     let title: String
     let hint: String
-    let listeningLabel: String
+    /// マイクボタンの下に出す文字（準備中・聞き取り中など）
+    let status: String
     let heard: String?
     let said: String?
     let tint: Color
     let textSize: TextSize
-    let isListening: Bool
+    let isRecording: Bool
+    let isProcessing: Bool
     let isDisabled: Bool
     let micLabel: String
     let action: () -> Void
@@ -121,24 +263,34 @@ struct SpeakerPanel: View {
             .id("\(heard ?? "")|\(said ?? "")")
 
             Button(action: action) {
-                Image(systemName: isListening ? "waveform" : "mic.fill")
+                Image(systemName: micIcon)
                     .font(.system(size: 26, weight: .semibold))
                     .foregroundStyle(.white)
+                    .symbolEffect(.variableColor.iterative, isActive: isRecording)
                     .frame(width: 64, height: 64)
-                    .background(Circle().fill(tint))
-                    .opacity(isDisabled && !isListening ? 0.4 : 1)
+                    .background(Circle().fill(isRecording ? Color.red : tint))
+                    .opacity(isDisabled && !isProcessing ? 0.4 : 1)
             }
             .disabled(isDisabled)
             .accessibilityLabel(micLabel)
 
-            Text(isListening ? listeningLabel : " ")
+            Text(status)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(tint.opacity(0.1))
+    }
+
+    /// 録音中は波形、文字にしている最中は「…」、それ以外はマイク
+    private var micIcon: String {
+        if isRecording { return "waveform" }
+        if isProcessing { return "ellipsis" }
+        return "mic.fill"
     }
 
     /// 訳文と自分の発言。どちらも文字サイズの設定に合わせて一緒に大きさが変わる。

@@ -35,6 +35,15 @@ enum PartnerLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    /// SenseVoice に「この言語で聞いて」と伝えるコード
+    var senseVoiceCode: String {
+        switch self {
+        case .korean: return "ko"
+        case .chinese: return "zh"
+        case .english: return "en"
+        }
+    }
+
     /// 相手側パネルの見出し（「相手」をその言語で）
     var partnerLabel: String {
         switch self {
@@ -56,9 +65,45 @@ enum PartnerLanguage: String, CaseIterable, Identifiable {
     /// 聞き取り中の表示
     var listeningLabel: String {
         switch self {
-        case .korean: return "듣는 중…"
-        case .chinese: return "正在听…"
-        case .english: return "Listening…"
+        case .korean: return "듣는 중… 다시 누르면 끝나요"
+        case .chinese: return "正在听… 再按一次结束"
+        case .english: return "Listening… tap again to finish"
+        }
+    }
+
+    /// 声を文字にしている最中の表示
+    var processingLabel: String {
+        switch self {
+        case .korean: return "글자로 바꾸는 중…"
+        case .chinese: return "正在转换成文字…"
+        case .english: return "Converting to text…"
+        }
+    }
+
+    /// アプリの準備中（モデルの読み込み中）の表示
+    var preparingLabel: String {
+        switch self {
+        case .korean: return "준비 중…"
+        case .chinese: return "准备中…"
+        case .english: return "Getting ready…"
+        }
+    }
+
+    /// 何も聞き取れなかったときの表示
+    var notHeardLabel: String {
+        switch self {
+        case .korean: return "잘 안 들렸어요. 다시 말씀해 주세요"
+        case .chinese: return "没听清楚，请再说一次"
+        case .english: return "Couldn't hear you. Please try again"
+        }
+    }
+
+    /// 準備に失敗したときの表示
+    var failedLabel: String {
+        switch self {
+        case .korean: return "음성 인식을 사용할 수 없어요"
+        case .chinese: return "无法使用语音识别"
+        case .english: return "Speech recognition is unavailable"
         }
     }
 }

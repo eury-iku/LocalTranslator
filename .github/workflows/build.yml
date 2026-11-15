@@ -15,6 +15,39 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
+      # SenseVoice のモデル（約 230MB）は大きいのでリポジトリに入れず、ここでダウンロードする。
+      # 一度ダウンロードしたものはキャッシュに取っておき、次からは使い回す。
+      - name: Restore SenseVoice model from cache
+        id: model-cache
+        uses: actions/cache@v5
+        with:
+          path: Models
+          key: sensevoice-zh-en-ja-ko-yue-int8-2025-09-09
+
+      - name: Download SenseVoice model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          name=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09
+          curl -fSL --retry 3 -o "$RUNNER_TEMP/$name.tar.bz2" \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$name.tar.bz2"
+          tar xjf "$RUNNER_TEMP/$name.tar.bz2" -C "$RUNNER_TEMP"
+          mkdir -p Models
+          cp "$RUNNER_TEMP/$name/model.int8.onnx" "$RUNNER_TEMP/$name/tokens.txt" Models/
+
+      - name: Check SenseVoice model
+        run: |
+          ls -lh Models
+          test -s Models/model.int8.onnx
+          test -s Models/tokens.txt
+
+      # sherpa-onnx（Swift Package）のダウンロードも、キャッシュで使い回す
+      - name: Restore Swift packages from cache
+        uses: actions/cache@v5
+        with:
+          path: build/SourcePackages
+          key: spm-${{ hashFiles('project.yml') }}
+
       - name: Generate Xcode project
         run: |
           xcodebuild -version
@@ -30,6 +63,8 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
+            -clonedSourcePackagesDirPath build/SourcePackages \
+            -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             'OTHER_LDFLAGS=$(inherited) -Wl,-no_adhoc_codesign' \
             build
@@ -39,6 +74,8 @@ jobs:
           app=build/Build/Products/Release-iphoneos/LocalTranslator.app
           test -f "$app/Info.plist"
           test -x "$app/LocalTranslator"
+          test -s "$app/Models/model.int8.onnx"
+          test -s "$app/Models/tokens.txt"
           mkdir -p build/ipa/Payload
           ditto "$app" build/ipa/Payload/LocalTranslator.app
           cd build/ipa

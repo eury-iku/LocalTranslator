@@ -2,6 +2,8 @@
 /LocalTranslator.xcodeproj/
 /build/
 /DerivedData/
+# SenseVoice のモデル（GitHub Actions がダウンロードする）
+/Models/
 *.ipa
 xcuserdata/
 

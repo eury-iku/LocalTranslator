@@ -1,10 +1,23 @@
 name: LocalTranslator
+packages:
+  # 音声認識エンジン（SenseVoice を動かす）。Swift Package として Xcode が取ってくる。
+  sherpa-onnx:
+    url: https://github.com/k2-fsa/sherpa-onnx
+    exactVersion: 2.0.1
 targets:
   LocalTranslator:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
-    sources: [LocalTranslator]
+    sources:
+      - LocalTranslator
+      # SenseVoice のモデル。リポジトリには入れず、GitHub Actions がビルドの前にダウンロードして置く。
+      - path: Models
+        type: folder
+        optional: true
+    dependencies:
+      - package: sherpa-onnx
+        product: sherpa-onnx
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.localtranslator
@@ -15,6 +28,7 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "話した言葉を文字にして翻訳するために、マイクを使います。音声は iPhone の中だけで処理され、外部には送信されません。"
 schemes:
   LocalTranslator:
     build:
