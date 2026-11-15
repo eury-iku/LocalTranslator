@@ -23,7 +23,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: Models
-          key: models-sensevoice-2025-09-09-plamo3-0.8b-q4km-1cf96ae
+          key: models-sensevoice-2024-07-17-plamo3-0.8b-q4km-1cf96ae
 
       - name: Download models
         if: steps.model-cache.outputs.cache-hit != 'true'
@@ -31,7 +31,9 @@ jobs:
           set -euo pipefail
           mkdir -p Models
 
-          name=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09
+          # 元祖の SenseVoice（2024-07-17）を使う。名前が似ている 2025-09-09 版は広東語用に
+          # 鍛え直したもので、日本語・英語・韓国語がうまく聞き取れないので使わない。
+          name=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17
           curl -fSL --retry 3 -o "$RUNNER_TEMP/$name.tar.bz2" \
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$name.tar.bz2"
           tar xjf "$RUNNER_TEMP/$name.tar.bz2" -C "$RUNNER_TEMP"

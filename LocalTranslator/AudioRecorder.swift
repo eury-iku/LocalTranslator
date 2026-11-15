@@ -40,9 +40,6 @@ final class AudioRecorder: @unchecked Sendable {
     private var nativeRate: Double = 48_000
     private var isRecording = false
     private var startedAt = Date()
-    /// 確認用に聞き返すための、最後に録った音
-    private var player: AVAudioPlayer?
-    private(set) var lastRecording: [Float] = []
 
     /// マイクを使ってよいか聞く。すでに答えていれば、すぐに結果が返る。
     static func requestPermission() async -> Bool {
@@ -99,7 +96,6 @@ final class AudioRecorder: @unchecked Sendable {
     /// 録音を始める。押す少し前の音も含める。
     func start() throws {
         try warmUp()
-        player?.stop()
         lock.lock()
         isRecording = true
         startedAt = Date()
@@ -118,18 +114,7 @@ final class AudioRecorder: @unchecked Sendable {
         nativeSamples.removeAll(keepingCapacity: true)
         lock.unlock()
 
-        let samples = Self.resample(native, from: rate)
-        lastRecording = samples
-        return Recording(samples: samples, pressedSeconds: pressedSeconds)
-    }
-
-    /// 最後に録った音を流す（確認用）
-    func playLast() {
-        guard !lastRecording.isEmpty,
-              let player = try? AVAudioPlayer(data: Self.wavData(lastRecording, sampleRate: Self.sampleRate))
-        else { return }
-        self.player = player
-        player.play()
+        return Recording(samples: Self.resample(native, from: rate), pressedSeconds: pressedSeconds)
     }
 
     /// マイクから届いた音をためていく（マイクが動いている間、何度も呼ばれる）。
@@ -186,24 +171,5 @@ final class AudioRecorder: @unchecked Sendable {
         }
         guard error == nil, let channel = outBuffer.floatChannelData?[0] else { return [] }
         return Array(UnsafeBufferPointer(start: channel, count: Int(outBuffer.frameLength)))
-    }
-
-    /// 音を WAV ファイルの形（16bit）にする。聞き返すときに使う。
-    private static func wavData(_ samples: [Float], sampleRate: Double) -> Data {
-        var data = Data()
-        func add<T: FixedWidthInteger>(_ value: T) {
-            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
-        }
-        let rate = UInt32(sampleRate)
-        let byteCount = UInt32(samples.count * 2)
-        data.append(contentsOf: Array("RIFF".utf8)); add(UInt32(36) + byteCount)
-        data.append(contentsOf: Array("WAVE".utf8))
-        data.append(contentsOf: Array("fmt ".utf8)); add(UInt32(16))
-        add(UInt16(1)); add(UInt16(1)); add(rate); add(rate * 2); add(UInt16(2)); add(UInt16(16))
-        data.append(contentsOf: Array("data".utf8)); add(byteCount)
-        for sample in samples {
-            add(Int16(max(-1, min(1, sample)) * Float(Int16.max)))
-        }
-        return data
     }
 }

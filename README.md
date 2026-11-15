@@ -9,7 +9,7 @@ Windows 11 から GitHub に push すると、GitHub Actions の macOS 環境で
 ## 音声認識のしくみ
 
 - エンジン：[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（Apache-2.0）。`project.yml` で Swift Package として v2.0.1 を指定し、ビルドのときに Xcode が取ってきます。
-- モデル：`sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09`（約 230MB）。リポジトリには入れず、GitHub Actions がビルドの前にダウンロードして `Models/` に置き、アプリの中に入れます。2 回目からはキャッシュを使います。
+- モデル：`sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17`（約 230MB）。リポジトリには入れず、GitHub Actions がビルドの前にダウンロードして `Models/` に置き、アプリの中に入れます。2 回目からはキャッシュを使います。
 - 録音した音は 16kHz・モノラルに変換して、iPhone の中だけで文字にします。外部には送信しません。
 
 ## ファイルの役割
