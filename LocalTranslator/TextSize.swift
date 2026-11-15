@@ -16,14 +16,8 @@ enum TextSize: Int, CaseIterable {
         }
     }
 
-    /// 小さく表示する自分の発言の文字サイズ（pt）
-    var saidPointSize: CGFloat {
-        switch self {
-        case .small: return 13  // .footnote と同じ
-        case .medium: return 16
-        case .large: return 20
-        }
-    }
+    /// 自分の発言の文字サイズ（pt）。訳文と同じ大きさにそろえる（色はグレーで区別）。
+    var saidPointSize: CGFloat { heardPointSize }
 
     /// 画面に出す名前
     var label: String {
