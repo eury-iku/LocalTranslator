@@ -2,8 +2,10 @@
 /LocalTranslator.xcodeproj/
 /build/
 /DerivedData/
-# SenseVoice のモデル（GitHub Actions がダウンロードする）
+# SenseVoice と PLaMo のモデル（GitHub Actions がダウンロードする）
 /Models/
+# llama.cpp の iOS 用部品（GitHub Actions がダウンロードする）
+/Vendor/
 *.ipa
 xcuserdata/
 

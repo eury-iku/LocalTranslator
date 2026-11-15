@@ -41,7 +41,9 @@ iPhone 12 mini（メモリ 4GB）で動く、ネット不要の対面翻訳ア�
 
 - 済み：最小アプリのビルドと iPhone へのインストール、上下 2 分割の画面、英語の追加、文字サイズの 3 段階、長い文のスクロール、SenseVoice で声を文字にする（マイクは 1 回押すと録音、もう 1 回で終了）。
 - 作業中：PLaMo で翻訳（手順 12）。
-  - llama.cpp は Swift Package の mattt/llama.swift（llama.cpp b10549 のビルド済み部品）で入れている。PLaMo 3 に対応した新しい版が必要。
+  - llama.cpp は公式の iOS 用部品（llama-bXXXXX-xcframework.zip、今は b12400）を GitHub Actions がダウンロードして Vendor に置き、直接つないでいる。
+  - PLaMo 3 を正しく読むには llama.cpp b11455 以降が必要（トークナイザーや YaRN の直しが入っている）。b10549 だと「翻訳のモデルを読み込めませんでした」になった。Swift Package の mattt/llama.swift は 8 月の b10549 で止まっているので使わない。
+  - 読み込みに失敗したときは、llama.cpp のエラーの中身を画面（マイクの下）に出す。
   - llama.framework は本物の部品なので、IPA を作るときに Frameworks から消さない（sherpa-onnx の抜け殻だけ消す）。
   - プロンプトは PLaMo 専用の PFML3 形式で直接書く（Translator.swift）。止める印は <|plamo:tag|> と <|plamo:bos|>。
   - 翻訳の「元の言語」は、SenseVoice の判定と文字の種類で決める（SpokenLanguage.swift）。SenseVoice は頼んだ言語と違う言葉もそのまま文字にすることがあるため。元と先が同じ言語なら訳さずに出す。

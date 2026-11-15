@@ -48,6 +48,22 @@ jobs:
           test -s Models/tokens.txt
           test "$(stat -f %z Models/plamo-3-translate-0.8b-Q4_K_M.gguf)" = "573126848"
 
+      # 翻訳エンジン llama.cpp の iOS 用部品（約 63MB）。llama.cpp 公式の配布物を使う。
+      # PLaMo 3 を正しく読むには b11455 以降が必要（トークナイザーや YaRN の直しが入っている）。
+      # 中身がすり替わっていないか、指紋（SHA-256）で確かめる。
+      - name: Download llama.cpp for iOS
+        run: |
+          set -euo pipefail
+          tag=b12400
+          curl -fSL --retry 3 -o "$RUNNER_TEMP/llama.zip" \
+            "https://github.com/ggml-org/llama.cpp/releases/download/$tag/llama-$tag-xcframework.zip"
+          echo "bf30e599eb8d7f7766f3278097028edca7a0ab449d5cee75ed6e82fadcdaf2ea  $RUNNER_TEMP/llama.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/llama.zip" -d "$RUNNER_TEMP/llama"
+          rm -rf Vendor
+          mkdir -p Vendor
+          mv "$RUNNER_TEMP/llama/build-apple/llama.xcframework" Vendor/
+          test -f Vendor/llama.xcframework/ios-arm64/llama.framework/llama
+
       # sherpa-onnx（Swift Package）のダウンロードも、キャッシュで使い回す
       - name: Restore Swift packages from cache
         uses: actions/cache@v5

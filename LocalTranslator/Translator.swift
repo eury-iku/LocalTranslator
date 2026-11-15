@@ -1,19 +1,19 @@
 import Foundation
-import LlamaSwift
+import llama
 
 /// PLaMo 3 Translate 0.8B（llama.cpp）で、文を別の言語に訳す。
 /// モデルはアプリの中の Models フォルダに入っている（GitHub Actions がビルドのときに入れる）。
 final class Translator: @unchecked Sendable {
     enum TranslatorError: LocalizedError {
         case modelNotFound
-        case loadFailed
+        case loadFailed(String)
         case tooLong
         case failed
 
         var errorDescription: String? {
             switch self {
             case .modelNotFound: return "翻訳のモデルがアプリに入っていません"
-            case .loadFailed: return "翻訳のモデルを読み込めませんでした"
+            case .loadFailed(let detail): return "翻訳のモデルを読み込めませんでした：\(detail)"
             case .tooLong: return "文が長すぎて翻訳できませんでした"
             case .failed: return "翻訳に失敗しました"
             }
@@ -50,9 +50,10 @@ final class Translator: @unchecked Sendable {
         }
 
         _ = Self.backendReady
+        LlamaLog.start()
 
         guard let model = llama_model_load_from_file(modelURL.path, llama_model_default_params()) else {
-            throw TranslatorError.loadFailed
+            throw TranslatorError.loadFailed(LlamaLog.recentErrors())
         }
 
         var contextParams = llama_context_default_params()
@@ -62,12 +63,12 @@ final class Translator: @unchecked Sendable {
         contextParams.n_threads_batch = 2
         guard let context = llama_init_from_model(model, contextParams) else {
             llama_model_free(model)
-            throw TranslatorError.loadFailed
+            throw TranslatorError.loadFailed(LlamaLog.recentErrors())
         }
         guard let vocab = llama_model_get_vocab(model) else {
             llama_free(context)
             llama_model_free(model)
-            throw TranslatorError.loadFailed
+            throw TranslatorError.loadFailed("語彙を取り出せませんでした")
         }
 
         self.model = model
@@ -187,5 +188,53 @@ final class Translator: @unchecked Sendable {
         }
         guard count > 0 else { return [] }
         return buffer.prefix(Int(count)).map { UInt8(bitPattern: $0) }
+    }
+}
+
+/// llama.cpp が出したエラーのメッセージを覚えておく。
+/// モデルの読み込みに失敗したとき、原因が分かるように画面に出すため。
+enum LlamaLog {
+    private final class Store: @unchecked Sendable {
+        let lock = NSLock()
+        var text = ""
+        /// 直前のメッセージがエラーだったか（続きの行をつなげるかどうかに使う）
+        var lastWasError = false
+    }
+
+    private static let store = Store()
+    /// 覚えておく長さ（文字数）。画面に出すので、最後の方だけにする。
+    private static let keepLength = 300
+
+    /// llama.cpp のメッセージを受け取り始める
+    static func start() {
+        llama_log_set({ level, text, _ in
+            guard let text else { return }
+            LlamaLog.receive(
+                String(cString: text),
+                isError: level == GGML_LOG_LEVEL_ERROR,
+                isContinuation: level == GGML_LOG_LEVEL_CONT)
+        }, nil)
+    }
+
+    /// エラーと、エラーの続きの行だけを覚える
+    private static func receive(_ message: String, isError: Bool, isContinuation: Bool) {
+        store.lock.lock()
+        defer { store.lock.unlock() }
+        if !isContinuation {
+            store.lastWasError = isError
+        }
+        guard store.lastWasError else { return }
+        store.text += message
+        if store.text.count > keepLength {
+            store.text = String(store.text.suffix(keepLength))
+        }
+    }
+
+    /// 最近のエラーのメッセージ（なければ「詳しい理由は不明」）
+    static func recentErrors() -> String {
+        store.lock.lock()
+        defer { store.lock.unlock() }
+        let text = store.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? "詳しい理由は分かりませんでした" : text
     }
 }

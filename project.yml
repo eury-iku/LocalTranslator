@@ -4,11 +4,6 @@ packages:
   sherpa-onnx:
     url: https://github.com/k2-fsa/sherpa-onnx
     exactVersion: 2.0.1
-  # 翻訳エンジン（PLaMo を動かす llama.cpp）。llama.cpp b10549 のビルド済み部品を使う。
-  # PLaMo 3 に対応した新しい版が必要なので、版を固定している。
-  llama-swift:
-    url: https://github.com/mattt/llama.swift
-    exactVersion: 2.10549.0
 targets:
   LocalTranslator:
     type: application
@@ -23,8 +18,10 @@ targets:
     dependencies:
       - package: sherpa-onnx
         product: sherpa-onnx
-      - package: llama-swift
-        product: LlamaSwift
+      # 翻訳エンジン（PLaMo を動かす llama.cpp）。llama.cpp 公式のビルド済み部品を、
+      # GitHub Actions がビルドの前にダウンロードして Vendor に置く。
+      - framework: Vendor/llama.xcframework
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.localtranslator

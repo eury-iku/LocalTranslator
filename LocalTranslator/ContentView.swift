@@ -378,7 +378,8 @@ struct SpeakerPanel: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
+                // エラーの説明が長いときも読めるように、4 行まで出す
+                .lineLimit(4)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
