@@ -93,6 +93,21 @@ final class AudioRecorder: @unchecked Sendable {
         }
     }
 
+    /// マイクを止める（アプリが裏に回ったときに呼ぶ）。録音中だった音は捨てる。
+    /// もう一度使うときは warmUp() か start() を呼ぶと、また動き出す。
+    func shutDown() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+
+        lock.lock()
+        isRecording = false
+        nativeSamples.removeAll(keepingCapacity: true)
+        lock.unlock()
+
+        // 音を使い終わったことを iPhone に伝える（ほかのアプリの音楽が再開できるようになる）
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
     /// 録音を始める。押す少し前の音も含める。
     func start() throws {
         try warmUp()

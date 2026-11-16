@@ -68,6 +68,9 @@ struct ContentView: View {
     @State private var speechPlayer = SpeechPlayer()
     /// 文字サイズ。アプリを閉じても覚えておく。
     @AppStorage("textSize") private var textSizeRaw = TextSize.small.rawValue
+    /// 訳文を自動で読み上げるか。アプリを閉じても覚えておく。
+    /// オフでも、パネルの 🔊 を押せば読み上げる。
+    @AppStorage("speechEnabled") private var speechEnabled = true
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
 
@@ -104,7 +107,7 @@ struct ContentView: View {
             }
             .rotationEffect(.degrees(180))
 
-            MiddleBar(partnerLanguage: $partnerLanguage, textSize: textSize)
+            MiddleBar(partnerLanguage: $partnerLanguage, textSize: textSize, speechEnabled: $speechEnabled)
 
             // 自分用パネル。黒い文字＝相手の発言の訳、グレーの文字＝自分が言ったこと。
             SpeakerPanel(
@@ -138,8 +141,27 @@ struct ContentView: View {
             await loadTranslator()
         }
         .onChange(of: scenePhase) { _, phase in
-            // アプリが裏に回ったら、読み上げを止める（マイクが押せないまま固まらないように）
-            if phase == .background {
+            switch phase {
+            case .background:
+                // アプリが裏に回ったら、読み上げとマイクを止める。録音中だった音は捨てる。
+                speechPlayer.stop()
+                if case .recording = activity {
+                    activity = nil
+                }
+                recorder.shutDown()
+            case .active:
+                // 戻ってきたら、話し始めが切れないように、マイクをまた動かしておく
+                if AudioRecorder.hasPermission {
+                    try? recorder.warmUp()
+                }
+            default:
+                // 通知やコントロールセンターを見ているだけのときは、何もしない
+                break
+            }
+        }
+        .onChange(of: speechEnabled) { _, isOn in
+            // 読み上げ中にオフにしたら、その場で止める
+            if !isOn {
                 speechPlayer.stop()
             }
         }
@@ -357,7 +379,8 @@ struct ContentView: View {
                 partnerTranslatedVoiceCode = voice
             }
             activity = nil
-            if let voice {
+            // 帯の 🔊 がオフのとき・アプリが裏に回っているときは、自動では読まない
+            if let voice, speechEnabled, scenePhase == .active {
                 // 訳を聞くのは、話した人の向かいの人
                 speak(shown, voiceCode: voice, to: speaker == .me ? .partner : .me)
             }
@@ -538,10 +561,12 @@ struct SpeakerPanel: View {
     }
 }
 
-/// 真ん中の帯。左右のボタンで文字サイズ、真ん中のタップで相手の言語を切り替える。
+/// 真ん中の帯。左右のボタンで文字サイズ、国旗のタップで相手の言語、🔊 で自動の読み上げを切り替える。
 struct MiddleBar: View {
     @Binding var partnerLanguage: PartnerLanguage
     @Binding var textSize: TextSize
+    /// 訳文を自動で読み上げるか
+    @Binding var speechEnabled: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -557,21 +582,32 @@ struct MiddleBar: View {
             Menu {
                 Picker("相手の言語", selection: $partnerLanguage) {
                     ForEach(PartnerLanguage.allCases) { language in
-                        Text("\(language.japaneseName)（\(language.nativeName)）")
+                        Text("\(language.flag) \(language.japaneseName)（\(language.nativeName)）")
                             .tag(language)
                     }
                 }
             } label: {
+                // 言語は国旗で見せる（日本語 ⇄ 相手の言語）
                 HStack(spacing: 6) {
-                    Text("日本語 ⇄ \(partnerLanguage.nativeName)")
+                    Text("🇯🇵 ⇄ \(partnerLanguage.flag)")
+                        .font(.title3)
                     Image(systemName: "chevron.down")
                         .font(.caption2)
                 }
-                .font(.subheadline)
                 .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity)
                 .frame(height: 40)
             }
+            .accessibilityLabel("相手の言語：\(partnerLanguage.japaneseName)")
+
+            Button {
+                speechEnabled.toggle()
+            } label: {
+                Image(systemName: speechEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                    .foregroundStyle(speechEnabled ? Color.accentColor : Color.secondary)
+                    .frame(width: 44, height: 40)
+            }
+            .accessibilityLabel(speechEnabled ? "自動の読み上げをオフにする" : "自動の読み上げをオンにする")
 
             Text("文字 \(textSize.label)")
                 .font(.caption)

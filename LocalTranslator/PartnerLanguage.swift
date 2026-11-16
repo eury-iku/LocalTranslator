@@ -17,6 +17,15 @@ enum PartnerLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 真ん中の帯に出す国旗（言語がひと目で分かるように）
+    var flag: String {
+        switch self {
+        case .korean: return "🇰🇷"
+        case .chinese: return "🇨🇳"
+        case .english: return "🇺🇸"
+        }
+    }
+
     /// 日本語での言語名
     var japaneseName: String {
         switch self {
