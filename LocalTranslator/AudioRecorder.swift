@@ -117,6 +117,16 @@ final class AudioRecorder: @unchecked Sendable {
         return Recording(samples: Self.resample(native, from: rate), pressedSeconds: pressedSeconds)
     }
 
+    /// ためてある「押す前の音」を捨てる。録音中は何もしない。
+    /// 読み上げの声をマイクが拾っているので、読み上げが終わったときに呼んで、次の録音に混ざらないようにする。
+    func discardPreRoll() {
+        lock.lock()
+        defer { lock.unlock() }
+        if !isRecording {
+            nativeSamples.removeAll(keepingCapacity: true)
+        }
+    }
+
     /// マイクから届いた音をためていく（マイクが動いている間、何度も呼ばれる）。
     private func append(_ buffer: AVAudioPCMBuffer) {
         guard let channel = buffer.floatChannelData?[0] else { return }

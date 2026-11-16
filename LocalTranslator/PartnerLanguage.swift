@@ -44,6 +44,24 @@ enum PartnerLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 読み上げの声の言語（iPhone に入っている声を選ぶためのコード）
+    var voiceCode: String {
+        switch self {
+        case .korean: return "ko-KR"
+        case .chinese: return "zh-CN"
+        case .english: return "en-US"
+        }
+    }
+
+    /// 読み上げている最中の表示
+    var speakingLabel: String {
+        switch self {
+        case .korean: return "읽는 중… 마이크를 누르면 멈춰요"
+        case .chinese: return "正在朗读… 按麦克风可停止"
+        case .english: return "Speaking… tap the mic to stop"
+        }
+    }
+
     /// 相手側パネルの見出し（「相手」をその言語で）
     var partnerLabel: String {
         switch self {
